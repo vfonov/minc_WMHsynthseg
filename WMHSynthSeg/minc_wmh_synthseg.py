@@ -151,8 +151,10 @@ def main():
             upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
 
             print('     Pushing data through the CNN')
+            print(f'{upscaled_padded.shape=} {upscaled_padded.dtype=}')
             pred1 = model(upscaled_padded[None, None, ...])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
             pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
+            print(f'{pred1.shape=} {pred2.shape=}')
             softmax = Softmax(dim=0)
             nlat = int((n_labels - n_neutral_labels) / 2.0)
             vflip = np.concatenate([np.array(range(n_neutral_labels)),
@@ -161,7 +163,7 @@ def main():
             pred_seg_p = 0.5 * softmax(pred1[0, 0:n_labels, ...]) + 0.5 * softmax(pred2[0, vflip, ...])
             pred_seg = label_list_segmentation_torch[torch.argmax(pred_seg_p, 0)]
             pred_seg = np.squeeze(pred_seg.detach().cpu().numpy())
-
+            print(f'{pred_seg.shape=} {pred_seg.dtype=}')
             # Write volumes from soft segmentation, if needed
             vols = voxelsize * torch.sum(pred_seg_p, dim=[1,2,3]).detach().cpu().numpy()
             if output_csv_path is not None:
