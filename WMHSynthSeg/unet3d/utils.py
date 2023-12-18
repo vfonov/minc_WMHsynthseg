@@ -4,7 +4,6 @@ import os
 import shutil
 import sys
 
-import h5py
 import numpy as np
 import torch
 from torch import optim
@@ -61,6 +60,7 @@ def save_network_output(output_path, output, logger=None):
     if logger is not None:
         logger.info(f'Saving network output to: {output_path}...')
     output = output.detach().cpu()[0]
+    import h5py
     with h5py.File(output_path, 'w') as f:
         f.create_dataset('predictions', data=output, compression='gzip')
 

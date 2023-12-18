@@ -1,10 +1,13 @@
 import argparse
+import os
+import sys
 
 def main():
-
+    
     parser = argparse.ArgumentParser(description="WMH-SynthSeg: joint segmentation of anatomy and white matter hyperintensities ", epilog='\n')
     parser.add_argument("--i", help="Input image or directory.", required=True)
     parser.add_argument("--o", help="Output segmentation (or directory, if the input is a directory)", required=True)
+    parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
     parser.add_argument("--device", default='cpu', help="device (cpu or cuda; optional)")
     parser.add_argument("--threads", type=int, default=1,
@@ -15,12 +18,11 @@ def main():
     input_path = args.i
     output_path = args.o
     output_csv_path = args.csv_vols
+    model_file = args.model
     device = args.device
     threads = args.threads
 
     # Prepare list of images to segment and leave before loading packages if nothing to do
-    import os
-    import sys
     if os.path.exists(input_path) is False:
         raise Exception('Input does not exist')
 
@@ -32,12 +34,12 @@ def main():
             raise Exception('CSV output must be a CSV file')
 
     if os.path.isfile(input_path): # file
-        if (input_path.endswith('.nii') or input_path.endswith('.nii.gz') or input_path.endswith('.mgz')) is False:
-            raise Exception('Input image is not of a supported type (.nii, .nii.gz, or .mgz)')
+        if not input_path.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
+            raise Exception('Input image is not of a supported type (.nii, .nii.gz,.mgz or .mnc )')
         head, tail = os.path.split(output_path)
         if len(tail) == 0:
             raise Exception('If input is a file, output must be a file')
-        if (tail.endswith('.nii') or tail.endswith('.nii.gz') or tail.endswith('.mgz')) is False:
+        if not tail.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
             raise Exception('Output image is not of a supported type (.nii, .nii.gz, or .mgz)')
         if ((len(head) > 0) and (os.path.isdir(head) is False)):
             raise Exception('Parent directory of output image does not exist')
@@ -48,18 +50,19 @@ def main():
         images_to_segment = []
         segmentations_to_write = []
         for im in os.listdir(input_path):
-            if im.endswith('.nii') or im.endswith('.nii.gz') or im.endswith('.mgz'):
+            if im.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
                 images_to_segment.append(os.path.join(input_path, im))
-                segmentations_to_write.append(os.path.join(output_path, im.replace('.nii', '_seg.nii').replace('.mgz', '_seg.mgz')))
+                segmentations_to_write.append(os.path.join(output_path, im.replace('.nii', '_seg.nii').replace('.mgz', '_seg.mgz').replace('.mnc', '_seg.mnc')))
         if len(images_to_segment) == 0:
-            raise Exception('Input directory does not contain images with supported type (.nii, .nii.gz, or .mgz)')
-        if output_path.endswith('.nii') or output_path.endswith('.nii.gz') or output_path.endswith('.mgz'):
+            raise Exception('Input directory does not contain images with supported type (.nii, .nii.gz, .mgz or .mnc)')
+        if output_path.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
             raise Exception('If input is a directory, output should be a directory too')
         if os.path.isdir(output_path) is False:
             os.mkdir(output_path)
 
     # We only import packages if we managed to parse
     print('Arguments seem correct; loading Python packages...')
+
     import torch
     sys.path.append(os.path.abspath(os.path.dirname(__file__)))
     from unet3d.model import UNet3D
@@ -78,7 +81,7 @@ def main():
     torch.set_num_threads(threads)
 
     # Constants;  TODO:replace by FS paths
-    model_file = os.path.join(os.environ.get('FREESURFER_HOME'), 'models', 'WMH-SynthSeg_v10_231110.pth')
+    #model_file = os.path.join(os.environ.get('FREESURFER_HOME'), 'models', 'WMH-SynthSeg_v10_231110.pth')
     label_list_segmentation = [0, 14, 15, 16, 24, 77, 85, 2, 3, 4, 7, 8, 10, 11, 12, 13, 17, 18, 26, 28, 41, 42, 43, 46,
                                47, 49, 50, 51, 52, 53, 54, 58, 60]
     label_list_segmentation_torch = torch.tensor(label_list_segmentation, device=device)
@@ -108,6 +111,7 @@ def main():
                        num_groups=num_groups, num_levels=num_levels, is_segmentation=False, is3d=True).to(device)
         checkpoint = torch.load(model_file,map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
 
         n_ims = len(images_to_segment)
         if output_csv_path is not None:

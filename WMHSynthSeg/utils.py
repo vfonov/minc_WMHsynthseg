@@ -1,8 +1,26 @@
-import nibabel as nib
 import torch
 import numpy as np
 import os
 from scipy.ndimage import gaussian_filter
+
+try:
+    import minc.io
+    have_minc_io=True
+    print("Have minc2_simple")
+
+
+except ImportError:
+    # minc2_simple not available :(
+    have_minc_io=False
+
+try:
+    import nibabel as nib
+    have_nibabel=True
+    print("Have nibabel")
+except ImportError:
+    # nibabel not available :(
+    have_nibabel=False
+
 
 #######
 
@@ -32,30 +50,53 @@ def viewVolume(x, aff=None):
 
 ###############################3
 
-def MRIwrite(volume, aff, filename, dtype=None):
+def MRIwrite(volume, aff, filename, dtype=None, history=None):
 
     if dtype is not None:
         volume = volume.astype(dtype=dtype)
+    else:
+        dtype = volume.dtype
 
     if aff is None:
         aff = np.eye(4)
-    header = nib.Nifti1Header()
-    nifty = nib.Nifti1Image(volume, aff, header)
+    if filename.endswith('.mnc'):
+        assert have_minc_io, 'Need minc2_simple to write .mnc files'
+        _aff=aff.copy()
+        # need to flip the volume
+        _aff[0:3,0:1] *= -1.0
+        _aff[0:2,3]   *= -1.0
+        minc.io.save_minc_volume(filename, volume,  aff=_aff, history=history,dtype=dtype)
+    else:
+        assert have_nibabel, 'Need nibabel to write .nii files'
+        header = nib.Nifti1Header()
+        nifty = nib.Nifti1Image(volume, aff, header)
 
-    nib.save(nifty, filename)
+        nib.save(nifty, filename)
 
 ###############################
 
 def MRIread(filename, dtype=None, im_only=False):
 
-    assert filename.endswith(('.nii', '.nii.gz', '.mgz')), 'Unknown data file: %s' % filename
+    assert filename.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')), 'Unknown data file: %s' % filename
 
-    x = nib.load(filename)
-    volume = x.get_fdata()
-    aff = x.affine
+    if filename.endswith(('.mnc')):
+        assert have_minc_io, 'Need minc2_simple to read .mnc files'
+        volume,aff = minc.io.load_minc_volume(filename, np.float32 if dtype is None else dtype)
 
-    if dtype is not None:
-        volume = volume.astype(dtype=dtype)
+        # HACK: convert to nifti format
+        aff[0:3,0:1] *= -1.0
+        aff[0:2,3]   *= -1.0
+
+        aff=np.asarray(aff)
+
+    else:
+        assert have_nibabel, 'Need nibabel to read .nii files'
+        x = nib.load(filename)
+        volume = x.get_fdata()
+        aff = x.affine
+
+        if dtype is not None:
+            volume = volume.astype(dtype=dtype)
 
     if im_only:
         return volume
