@@ -6,7 +6,6 @@ from scipy.ndimage import gaussian_filter
 try:
     import minc.io
     have_minc_io=True
-    print("Have minc2_simple")
 
 
 except ImportError:
@@ -16,7 +15,6 @@ except ImportError:
 try:
     import nibabel as nib
     have_nibabel=True
-    print("Have nibabel")
 except ImportError:
     # nibabel not available :(
     have_nibabel=False
@@ -61,14 +59,12 @@ def MRIwrite(volume, aff, filename, dtype=None, history=None):
         aff = np.eye(4)
     if filename.endswith('.mnc'):
         assert have_minc_io, 'Need minc2_simple to write .mnc files'
-        _aff=aff.copy()
-        # HACK: convert from nifti format
-        _aff[0:3,0:2] *= -1.0
-        _aff[0:2,3]   *= -1.0
+        # TODO: should I change RAS to LPS?
         # convert from nibabel convention
-        _volume=np.flip(np.flip(volume.transpose([2,1,0]),axis=0),axis=1).copy()
+        #_volume=np.flip(np.flip(volume.transpose([2,1,0]),axis=0),axis=1).copy()
+        _volume=volume.transpose([2,1,0]).copy()
 
-        minc.io.save_minc_volume(filename, _volume,  aff=_aff, history=history,dtype=dtype)
+        minc.io.save_minc_volume(filename, _volume,  aff=aff, history=history,dtype=dtype)
     else:
         assert have_nibabel, 'Need nibabel to write .nii files'
         header = nib.Nifti1Header()
@@ -85,13 +81,11 @@ def MRIread(filename, dtype=None, im_only=False):
     if filename.endswith(('.mnc')):
         assert have_minc_io, 'Need minc2_simple to read .mnc files'
         _volume,_aff = minc.io.load_minc_volume(filename, np.float32 if dtype is None else dtype)
-
-        # HACK: convert to nifti format
-        _aff[0:3,0:2] *= -1.0
-        _aff[0:2,3]   *= -1.0
+        # TODO: should I change RAS to LPS?
         aff=np.asarray(_aff)
         # convert to nibabel convention
-        volume=np.flip(np.flip(_volume,axis=0),axis=1).transpose([2,1,0]).copy()
+        #volume=np.flip(np.flip(_volume,axis=0),axis=1).transpose([2,1,0]).copy()
+        volume=_volume.transpose([2,1,0]).copy()
 
     else:
         assert have_nibabel, 'Need nibabel to read .nii files'
