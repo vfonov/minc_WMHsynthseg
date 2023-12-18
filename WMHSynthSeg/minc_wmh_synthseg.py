@@ -140,20 +140,27 @@ def main():
             image_torch = image_torch / torch.max(image_torch)
 
             print('     Upscaling to target resolution')
-            voxsize = np.sqrt(np.sum(aff2 ** 2, axis=0))[:-1]
-            factors = voxsize / ref_res
-            upscaled = myzoom_torch(image_torch, factors, device=device)
-            aff_upscaled = aff2.copy()
-            for j in range(3):
-                aff_upscaled[:-1, j] = aff_upscaled[:-1, j] / factors[j]
-            aff_upscaled[:-1, -1] = aff_upscaled[:-1, -1] - np.matmul(aff_upscaled[:-1, :-1], 0.5 * (factors - 1))
-            upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
-            upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
+            if False:
+                voxsize = np.sqrt(np.sum(aff2 ** 2, axis=0))[:-1]
+                factors = voxsize / ref_res
+                upscaled = myzoom_torch(image_torch, factors, device=device)
+                aff_upscaled = aff2.copy()
+                for j in range(3):
+                    aff_upscaled[:-1, j] = aff_upscaled[:-1, j] / factors[j]
+                aff_upscaled[:-1, -1] = aff_upscaled[:-1, -1] - np.matmul(aff_upscaled[:-1, :-1], 0.5 * (factors - 1))
+                upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
+                upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
+            else:
+                voxsize = np.array([1.0,1.0,1.0])
+                factors = np.array([1.0,1.0,1.0])
+                upscaled_padded = torch.zeros(tuple((np.ceil(np.array(image_torch.shape) / 32.0) * 32).astype(int)), device=device)
+                upscaled_padded[:image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]] = image_torch
+                aff_upscaled = aff2.copy()
 
             print('     Pushing data through the CNN')
             print(f'{upscaled_padded.shape=} {upscaled_padded.dtype=}')
-            pred1 = model(upscaled_padded[None, None, ...])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
-            pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
+            pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]]
+            pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]]
             print(f'{pred1.shape=} {pred2.shape=}')
             softmax = Softmax(dim=0)
             nlat = int((n_labels - n_neutral_labels) / 2.0)

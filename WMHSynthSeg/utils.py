@@ -124,7 +124,7 @@ def myzoom_torch(X, factor, device, aff=None):
     vx[vx < 0] = 0
     vy[vy < 0] = 0
     vz[vz < 0] = 0
-    vx[vx > (X.shape[0]-1)] = (X.shape[0]-1)
+    vx[vx > (X.shape[0] - 1)] = (X.shape[0] - 1)
     vy[vy > (X.shape[1] - 1)] = (X.shape[1] - 1)
     vz[vz > (X.shape[2] - 1)] = (X.shape[2] - 1)
 
