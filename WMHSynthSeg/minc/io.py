@@ -43,13 +43,11 @@ def hdr_to_affine(hdr):
             rot[i,:] = hdr[aa].dir_cos
         else:
             rot[i,i] = 1
-
         scales[i,i] = hdr[aa].step
         start[i] = hdr[aa].start
     origin = start@rot
     out=np.eye(4)
-
-    out[0:3,0:3] = (scales.T*rot).T
+    out[0:3,0:3] = scales@rot
     out[0:3,3] = origin
     return out
 

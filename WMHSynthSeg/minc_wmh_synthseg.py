@@ -22,9 +22,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                         help="(optional) Number of CPU cores to be used. Default is 1. You can use -1 to use all available cores")
     parser.add_argument('-v', '--verbose',default=False,
                     action='store_true')  # on/off flag
-    parser.add_argument( '--half',default=False,
-                    action='store_true')  # on/off flag
-
+    
 
     args = parser.parse_args()
 
@@ -35,7 +33,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     device = args.device
     threads = args.threads
     verbose = args.verbose
-    half = args.half
 
     # Prepare list of images to segment and leave before loading packages if nothing to do
     if os.path.exists(input_path) is False:
@@ -84,9 +81,10 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     from utils import MRIread, MRIwrite, myzoom_torch, align_volume_to_ref
     import numpy as np
     from torch.nn import Softmax
+    # for voxel size
+    from minc.geo import decompose
 
-   # Set up threads and device
-    _device=device
+    # Set up threads and device
     device = torch.device(device)
     if verbose: print('Using ' + args.device)
     if threads < 0:
@@ -126,8 +124,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
         checkpoint = torch.load(model_file,map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
-        if half:
-            model.half()
 
         n_ims = len(images_to_segment)
         if output_csv_path is not None:
@@ -148,21 +144,22 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
             # try:
 
             if verbose: print('     Loading input volume and normalizing to [0,1]')
-            image, aff = MRIread(input_file)
+            image, aff, minc_volume = MRIread(input_file)
             image_torch = torch.tensor(np.squeeze(image).astype(float), device=device)
 
             while len(image_torch.shape)>3:
                 image_torch = image_torch.mean(image, dim=-1)
 
-            if False: # no need in MINC    
+            if not minc_volume: # no need in MINC    
                 image_torch, aff2 = align_volume_to_ref(image_torch, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
             else:
+                # no need to do any of this with MINC
                 image_torch, aff2 = image_torch, aff
 
             # intensity normalization
             image_torch = image_torch / torch.max(image_torch)
 
-            if False:
+            if not minc_volume: # original broken logick
                 if verbose: print('     Upscaling to target resolution') # TODO this this awful resampler
                 voxsize = np.sqrt(np.sum(aff2 ** 2, axis=0))[:-1]
                 factors = voxsize / ref_res
@@ -174,31 +171,30 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
                 upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
             else:
-                voxsize = np.array([1.0,1.0,1.0])
-                factors = np.array([1.0,1.0,1.0])
+                _,voxsize,_ = decompose(aff2)
+                #voxsize = np.array([1.0,1.0,1.0])
+                factors = voxsize / ref_res # do we need this?
 
                 upscaled_padded = torch.zeros(tuple((np.ceil(np.array(image_torch.shape) / 32.0) * 32).astype(int)), device=device)
                 upscaled_padded[:image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]] = image_torch
                 aff_upscaled = aff2.copy()
 
             if verbose: print('     Pushing data through the CNN')
-            print(f'{upscaled_padded.shape=} {upscaled_padded.dtype=} {device=}')
-            with torch.autocast(device_type=_device):
-                pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
-                pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
 
-                print(f'{pred1.shape=} {pred2.shape=}')
-                softmax = Softmax(dim=0)
-                nlat = int((n_labels - n_neutral_labels) / 2.0)
-                vflip = np.concatenate([np.array(range(n_neutral_labels)),
-                                        np.array(range(n_neutral_labels + nlat, n_labels)),
-                                        np.array(range(n_neutral_labels, n_neutral_labels + nlat))])
-                pred_seg_p = 0.5 * softmax(pred1[0, 0:n_labels, ...]) + 0.5 * softmax(pred2[0, vflip, ...])
-                pred_seg = label_list_segmentation_torch[torch.argmax(pred_seg_p, 0)]
-                pred_seg = np.squeeze(pred_seg.detach().cpu().numpy())
-                print(f'{pred_seg.shape=} {pred_seg.dtype=}')
-                # Write volumes from soft segmentation, if needed
-                vols = voxelsize * torch.sum(pred_seg_p, dim=[1,2,3]).detach().cpu().numpy()
+            pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+            pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+
+            #print(f'{pred1.shape=} {pred2.shape=}')
+            softmax = Softmax(dim=0)
+            nlat = int((n_labels - n_neutral_labels) / 2.0)
+            vflip = np.concatenate([np.array(range(n_neutral_labels)),
+                                    np.array(range(n_neutral_labels + nlat, n_labels)),
+                                    np.array(range(n_neutral_labels, n_neutral_labels + nlat))])
+            pred_seg_p = 0.5 * softmax(pred1[0, 0:n_labels, ...]) + 0.5 * softmax(pred2[0, vflip, ...])
+            pred_seg = label_list_segmentation_torch[torch.argmax(pred_seg_p, 0)]
+            pred_seg = np.squeeze(pred_seg.detach().cpu().numpy())
+            # Write volumes from soft segmentation, if needed
+            vols = voxelsize * torch.sum(pred_seg_p, dim=[1,2,3]).detach().cpu().numpy()
 
             if output_csv_path is not None:
                 # Subject name and ICV
@@ -208,7 +204,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                     if label_list_segmentation[l] > 0:
                         csv.write(',' + str(vols[l]) )
                 csv.write('\n')
-
             MRIwrite(pred_seg, aff_upscaled, output_file,dtype=np.uint8)
 
         # We are done!

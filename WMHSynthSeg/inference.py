@@ -5,6 +5,7 @@ def main():
     parser = argparse.ArgumentParser(description="WMH-SynthSeg: joint segmentation of anatomy and white matter hyperintensities ", epilog='\n')
     parser.add_argument("--i", help="Input image or directory.", required=True)
     parser.add_argument("--o", help="Output segmentation (or directory, if the input is a directory)", required=True)
+    parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
     parser.add_argument("--device", default='cpu', help="device (cpu or cuda; optional)")
     parser.add_argument("--threads", type=int, default=1,
@@ -17,6 +18,7 @@ def main():
     output_csv_path = args.csv_vols
     device = args.device
     threads = args.threads
+    model_file = args.model
 
     # Prepare list of images to segment and leave before loading packages if nothing to do
     import os
@@ -78,7 +80,7 @@ def main():
     torch.set_num_threads(threads)
 
     # Constants;  TODO:replace by FS paths
-    model_file = os.path.join(os.environ.get('FREESURFER_HOME'), 'models', 'WMH-SynthSeg_v10_231110.pth')
+    #model_file = os.path.join(os.environ.get('FREESURFER_HOME'), 'models', 'WMH-SynthSeg_v10_231110.pth')
     label_list_segmentation = [0, 14, 15, 16, 24, 77, 85, 2, 3, 4, 7, 8, 10, 11, 12, 13, 17, 18, 26, 28, 41, 42, 43, 46,
                                47, 49, 50, 51, 52, 53, 54, 58, 60]
     label_list_segmentation_torch = torch.tensor(label_list_segmentation, device=device)
@@ -128,7 +130,7 @@ def main():
             # try:
 
             print('     Loading input volume and normalizing to [0,1]')
-            image, aff = MRIread(input_file)
+            image, aff,_ = MRIread(input_file)
             image_torch = torch.tensor(np.squeeze(image).astype(float), device=device)
             while len(image_torch.shape)>3:
                 image_torch = image_torch.mean(image, dim=-1)
