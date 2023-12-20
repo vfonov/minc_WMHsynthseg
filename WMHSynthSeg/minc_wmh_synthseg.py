@@ -172,9 +172,9 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
             else:
                 _,voxsize,_ = decompose(aff2)
-                #voxsize = np.array([1.0,1.0,1.0])
                 factors = voxsize / ref_res # do we need this?
-
+                # upscale/downscale to 1mm ?
+                
                 upscaled_padded = torch.zeros(tuple((np.ceil(np.array(image_torch.shape) / 32.0) * 32).astype(int)), device=device)
                 upscaled_padded[:image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]] = image_torch
                 aff_upscaled = aff2.copy()
