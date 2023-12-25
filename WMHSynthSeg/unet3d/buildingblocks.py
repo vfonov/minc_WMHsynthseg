@@ -280,6 +280,29 @@ class Encoder(nn.Module):
         x = self.basic_module(x)
         return x
 
+class ConcatJoining(nn.Module):
+    """
+    A module for concatenation joining of the encoder and decoder paths.
+    """
+
+    def __init__(self):
+        super(ConcatJoining, self).__init__()
+
+    def forward(self, encoder_features, x):
+        return torch.cat((encoder_features, x), dim=1)
+    
+
+class SumJoining(nn.Module):
+    """
+    A module for concatenation joining of the encoder and decoder paths.
+    """
+
+    def __init__(self):
+        super(SumJoining, self).__init__()
+        
+    def forward(self, encoder_features, x):
+        return encoder_features+x
+
 
 class Decoder(nn.Module):
     """
@@ -309,22 +332,22 @@ class Decoder(nn.Module):
         if upsample:
             if basic_module == DoubleConv:
                 # if DoubleConv is the basic_module use interpolation for upsampling and concatenation joining
-                self.upsampling = InterpolateUpsampling(mode=mode)
+                self.upsampling = InterpolateUpsampling(mode=mode,scale_factor=scale_factor)
                 # concat joining
-                self.joining = partial(self._joining, concat=True)
+                self.joining = ConcatJoining()#partial(self._joining, concat=True)
             else:
                 # if basic_module=ResNetBlock use transposed convolution upsampling and summation joining
                 self.upsampling = TransposeConvUpsampling(in_channels=in_channels, out_channels=out_channels,
                                                           kernel_size=conv_kernel_size, scale_factor=scale_factor)
                 # sum joining
-                self.joining = partial(self._joining, concat=False)
+                self.joining = SumJoining()#partial(self._joining, concat=False)
                 # adapt the number of in_channels for the ResNetBlock
                 in_channels = out_channels
         else:
             # no upsampling
             self.upsampling = NoUpsampling()
             # concat joining
-            self.joining = partial(self._joining, concat=True)
+            self.joining = ConcatJoining()# partial(self._joining, concat=True)
 
         self.basic_module = basic_module(in_channels, out_channels,
                                          encoder=False,
@@ -340,12 +363,12 @@ class Decoder(nn.Module):
         x = self.basic_module(x)
         return x
 
-    @staticmethod
-    def _joining(encoder_features, x, concat):
-        if concat:
-            return torch.cat((encoder_features, x), dim=1)
-        else:
-            return encoder_features + x
+    # @staticmethod
+    # def _joining(encoder_features, x, concat):
+    #     if concat:
+    #         return torch.cat((encoder_features, x), dim=1)
+    #     else:
+    #         return encoder_features + x
 
 
 def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_padding, layer_order, num_groups,
@@ -415,7 +438,9 @@ class AbstractUpsampling(nn.Module):
         # get the spatial dimensions of the output given the encoder_features
         output_size = encoder_features.size()[2:]
         # upsample the input and return
-        return self.upsample(x, output_size)
+        #return self.upsample(x, output_size)
+        # possible bug in the code: nn.ConvTranspose3d does not take 2 arguments
+        return self.upsample(x)
 
 
 class InterpolateUpsampling(AbstractUpsampling):
@@ -426,23 +451,10 @@ class InterpolateUpsampling(AbstractUpsampling):
             used only if transposed_conv is False
     """
 
-    def __init__(self, mode='nearest'):
-        upsample = partial(self._interpolate, mode=mode)
+    def __init__(self, mode='nearest', scale_factor=(2, 2, 2)):
+        # this is compatible with TORCHDYNAMO
+        upsample = nn.Upsample(mode=mode,scale_factor=scale_factor)
         super().__init__(upsample)
-
-    @staticmethod
-    def _interpolate(x, size, mode):
-        # Eugenios fix
-        if (size[0]*size[1]*size[2]*x.shape[1]) < 2e9:
-            return F.interpolate(x, size=size, mode=mode)
-        else:
-            tensors = []
-            i1 = 0
-            while i1<x.shape[1]:
-                i2 = min(i1+10, x.shape[1])
-                tensors.append(F.interpolate(x[:, i1:i2, :, :, :], size=size, mode=mode))
-                i1 = i2
-            return  torch.concat(tensors, dim=1)
 
 class TransposeConvUpsampling(AbstractUpsampling):
     """
