@@ -2,6 +2,8 @@ import argparse
 import os
 import sys
 
+
+
 def main():
     
     parser = argparse.ArgumentParser(description="WMH-SynthSeg: joint segmentation of anatomy and white matter hyperintensities ",
@@ -15,13 +17,15 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     
     parser.add_argument("i", help="Input image or directory.")
     parser.add_argument("o", help="Output segmentation (or directory, if the input is a directory)")
+    parser.add_argument('--export',default=False,action='store_true',help="Export the model to ONNX format")
+
     parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
     parser.add_argument("--device", default='cpu', help="device (cpu or cuda; optional)")
     parser.add_argument("--threads", type=int, default=-1,
                         help="(optional) Number of CPU cores to be used. Default is 1. You can use -1 to use all available cores")
-    parser.add_argument('-v', '--verbose',default=False,
-                    action='store_true')  # on/off flag
+    parser.add_argument('-v', '--verbose',default=False, action='store_true') 
+    parser.add_argument('--progress',default=False, action='store_true') 
     
 
     args = parser.parse_args()
@@ -33,44 +37,39 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     device = args.device
     threads = args.threads
     verbose = args.verbose
+    onnx_export = args.export
+    progress = args.progress
 
     # Prepare list of images to segment and leave before loading packages if nothing to do
     if os.path.exists(input_path) is False:
         raise Exception('Input does not exist')
 
-    if output_csv_path is not None:
+    if output_csv_path is not None and not onnx_export:
         head, tail = os.path.split(output_csv_path)
         if ((len(head)>0) and (os.path.isdir(head) is False)):
             raise Exception('Parent directory of CSV file does not exist')
         if tail.endswith('.csv') is False:
             raise Exception('CSV output must be a CSV file')
 
-    if os.path.isfile(input_path): # file
-        if not input_path.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
-            raise Exception('Input image is not of a supported type (.nii, .nii.gz,.mgz or .mnc )')
-        head, tail = os.path.split(output_path)
-        if len(tail) == 0:
-            raise Exception('If input is a file, output must be a file')
-        if not tail.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
-            raise Exception('Output image is not of a supported type (.nii, .nii.gz, or .mgz)')
-        if ((len(head) > 0) and (os.path.isdir(head) is False)):
-            raise Exception('Parent directory of output image does not exist')
-        images_to_segment = [input_path]
-        segmentations_to_write = [output_path]
-
-    if os.path.isdir(input_path):  # directory
-        images_to_segment = []
-        segmentations_to_write = []
-        for im in os.listdir(input_path):
-            if im.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
-                images_to_segment.append(os.path.join(input_path, im))
-                segmentations_to_write.append(os.path.join(output_path, im.replace('.nii', '_seg.nii').replace('.mgz', '_seg.mgz').replace('.mnc', '_seg.mnc')))
-        if len(images_to_segment) == 0:
-            raise Exception('Input directory does not contain images with supported type (.nii, .nii.gz, .mgz or .mnc)')
-        if output_path.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
-            raise Exception('If input is a directory, output should be a directory too')
-        if os.path.isdir(output_path) is False:
-            os.mkdir(output_path)
+    if input_path.endswith('.txt') and output_path.endswith('.txt'):
+        # reading a list and writing a list 
+        with open(input_path,"r") as f:
+            images_to_segment=[i.rstrip('\n') for i in f.readlines()]
+        with open(output_path,"r") as f:
+            segmentations_to_write=[i.rstrip('\n') for i in f.readlines()]
+    else:
+        if os.path.isfile(input_path) and not onnx_export: # file
+            if not input_path.endswith(('.nii', '.nii.gz', '.mgz', '.mnc', '.txt')):
+                raise Exception('Input image is not of a supported type (.nii, .nii.gz,.mgz or .mnc )')
+            head, tail = os.path.split(output_path)
+            if len(tail) == 0:
+                raise Exception('If input is a file, output must be a file')
+            if not tail.endswith(('.nii', '.nii.gz', '.mgz', '.mnc')):
+                raise Exception('Output image is not of a supported type (.nii, .nii.gz, or .mgz)')
+            if ((len(head) > 0) and (os.path.isdir(head) is False)):
+                raise Exception('Parent directory of output image does not exist')
+            images_to_segment = [input_path]
+            segmentations_to_write = [output_path]
 
     # We only import packages if we managed to parse
     if verbose: print('Arguments seem correct; loading Python packages...')
@@ -121,7 +120,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
 
         model = UNet3D(in_channels, out_channels, final_sigmoid=False, f_maps=f_maps, layer_order=layer_order,
                        num_groups=num_groups, num_levels=num_levels, is_segmentation=False, is3d=True).to(device)
-        checkpoint = torch.load(model_file,map_location=device)
+        checkpoint = torch.load(model_file, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
 
@@ -135,6 +134,10 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                     name = label_names[l]
                     csv.write(',' + name + '(' + str(lab) + ')')
             csv.write('\n')
+
+        if progress:
+            from tqdm import tqdm
+            pbar = tqdm(total=n_ims)
 
         for nim in range(n_ims):
             input_file = images_to_segment[nim]
@@ -179,12 +182,47 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 upscaled_padded[:image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]] = image_torch
                 aff_upscaled = aff2.copy()
 
-            if verbose: print('     Pushing data through the CNN')
+                if onnx_export: # THIS IS A HACK, move it somewhere else
+                    onnx_path = output_path+'.onnx'
+                    ir_path   = output_path+'.xml'
+                    if True: # export using torch.onnx.export and then convert to OpenVINO
+                        torch.onnx.export(
+                            model,
+                            upscaled_padded,
+                            onnx_path,
+                            #opset_version=11,
+                            do_constant_folding=True,
+                            verbose=False,
+                            input_names=['scan'], 
+                            output_names=['seg'],
+                            # dynamic_axes={
+                            #     "scan": [2,3,4],
+                            #     "seg": [2,3,4],
+                            #     }
+                            )
+                        
+                        from openvino.tools import mo
+                        from openvino.runtime import serialize
+                        ov_model = mo.convert_model(onnx_path, compress_to_fp16=True)
+                        serialize(ov_model, ir_path)
+                        print(f"OpenVINO IR model exported to {ir_path}.")
+                    else: # export using torch.onnx.dynamo_export
+                        export_options = torch.onnx.ExportOptions(dynamic_shapes=True)
+                        model_export=torch.onnx.dynamo_export(
+                            model,
+                            upscaled_padded,
+                            export_options=export_options)
+                        
+                        print(model_export)
+                        model_export.save(onnx_path)
+                    
+                    print(f"ONNX model exported to {onnx_path}.")
+                else:
+                    if verbose: print('     Pushing data through the CNN')
 
             pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
             pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
 
-            #print(f'{pred1.shape=} {pred2.shape=}')
             softmax = Softmax(dim=0)
             nlat = int((n_labels - n_neutral_labels) / 2.0)
             vflip = np.concatenate([np.array(range(n_neutral_labels)),
@@ -206,14 +244,20 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 csv.write('\n')
             MRIwrite(pred_seg, aff_upscaled, output_file,dtype=np.uint8)
 
-        # We are done!
-        if output_csv_path is not None:
-            csv.close()
-            if verbose: 
-                print(' ')
-                print('Written volumes to ' + output_csv_path)
-                print(' ')
-        if verbose:  print('All done!')
+            # We are done!
+            if output_csv_path is not None:
+                csv.close()
+                if verbose: 
+                    print(' ')
+                    print('Written volumes to ' + output_csv_path)
+                    print(' ')
+            if verbose:  print('All done!')
+
+            if progress:
+                pbar.update(1)
+        #####
+        if progress:
+            pbar.close()
 
 
 # execute script
