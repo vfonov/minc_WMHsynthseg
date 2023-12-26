@@ -2,6 +2,15 @@ import argparse
 import os
 import sys
 
+import torch
+from unet3d.model import UNet3D
+from utils import MRIread, MRIwrite, myzoom_torch, align_volume_to_ref
+import numpy as np
+from torch.nn import Softmax
+
+# for voxel size
+from minc.geo import decompose
+
 
 
 def main():
@@ -17,7 +26,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     
     parser.add_argument("i", help="Input image or directory.")
     parser.add_argument("o", help="Output segmentation (or directory, if the input is a directory)")
-    parser.add_argument('--export',default=False,action='store_true',help="Export the model to ONNX format")
 
     parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
@@ -70,18 +78,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 raise Exception('Parent directory of output image does not exist')
             images_to_segment = [input_path]
             segmentations_to_write = [output_path]
-
-    # We only import packages if we managed to parse
-    if verbose: print('Arguments seem correct; loading Python packages...')
-
-    import torch
-    #sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-    from unet3d.model import UNet3D
-    from utils import MRIread, MRIwrite, myzoom_torch, align_volume_to_ref
-    import numpy as np
-    from torch.nn import Softmax
-    # for voxel size
-    from minc.geo import decompose
 
     # Set up threads and device
     device = torch.device(device)
@@ -162,7 +158,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
             # intensity normalization
             image_torch = image_torch / torch.max(image_torch)
 
-            if not minc_volume: # original broken logick
+            if not minc_volume: # original broken logik
                 if verbose: print('     Upscaling to target resolution') # TODO this this awful resampler
                 voxsize = np.sqrt(np.sum(aff2 ** 2, axis=0))[:-1]
                 factors = voxsize / ref_res
@@ -181,44 +177,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 upscaled_padded = torch.zeros(tuple((np.ceil(np.array(image_torch.shape) / 32.0) * 32).astype(int)), device=device)
                 upscaled_padded[:image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]] = image_torch
                 aff_upscaled = aff2.copy()
-
-                if onnx_export: # THIS IS A HACK, move it somewhere else
-                    onnx_path = output_path+'.onnx'
-                    ir_path   = output_path+'.xml'
-                    if True: # export using torch.onnx.export and then convert to OpenVINO
-                        torch.onnx.export(
-                            model,
-                            upscaled_padded,
-                            onnx_path,
-                            #opset_version=11,
-                            do_constant_folding=True,
-                            verbose=False,
-                            input_names=['scan'], 
-                            output_names=['seg'],
-                            # dynamic_axes={
-                            #     "scan": [2,3,4],
-                            #     "seg": [2,3,4],
-                            #     }
-                            )
-                        
-                        from openvino.tools import mo
-                        from openvino.runtime import serialize
-                        ov_model = mo.convert_model(onnx_path, compress_to_fp16=True)
-                        serialize(ov_model, ir_path)
-                        print(f"OpenVINO IR model exported to {ir_path}.")
-                    else: # export using torch.onnx.dynamo_export
-                        export_options = torch.onnx.ExportOptions(dynamic_shapes=True)
-                        model_export=torch.onnx.dynamo_export(
-                            model,
-                            upscaled_padded,
-                            export_options=export_options)
-                        
-                        print(model_export)
-                        model_export.save(onnx_path)
-                    
-                    print(f"ONNX model exported to {onnx_path}.")
-                else:
-                    if verbose: print('     Pushing data through the CNN')
 
             pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
             pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
