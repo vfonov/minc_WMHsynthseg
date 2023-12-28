@@ -34,6 +34,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                         help="(optional) Number of CPU cores to be used. Default is 1. You can use -1 to use all available cores")
     parser.add_argument('-v', '--verbose',default=False, action='store_true') 
     parser.add_argument('--progress',default=False, action='store_true') 
+    parser.add_argument('--trim',default=False, action='store_true',help='Trim instead of expand') 
     
 
     args = parser.parse_args()
@@ -45,14 +46,14 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     device = args.device
     threads = args.threads
     verbose = args.verbose
-    onnx_export = args.export
     progress = args.progress
+    trim = args.trim
 
     # Prepare list of images to segment and leave before loading packages if nothing to do
     if os.path.exists(input_path) is False:
         raise Exception('Input does not exist')
 
-    if output_csv_path is not None and not onnx_export:
+    if output_csv_path is not None:
         head, tail = os.path.split(output_csv_path)
         if ((len(head)>0) and (os.path.isdir(head) is False)):
             raise Exception('Parent directory of CSV file does not exist')
@@ -66,7 +67,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
         with open(output_path,"r") as f:
             segmentations_to_write=[i.rstrip('\n') for i in f.readlines()]
     else:
-        if os.path.isfile(input_path) and not onnx_export: # file
+        if os.path.isfile(input_path): # file
             if not input_path.endswith(('.nii', '.nii.gz', '.mgz', '.mnc', '.txt')):
                 raise Exception('Input image is not of a supported type (.nii, .nii.gz,.mgz or .mnc )')
             head, tail = os.path.split(output_path)
@@ -144,7 +145,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
 
             if verbose: print('     Loading input volume and normalizing to [0,1]')
             image, aff, minc_volume = MRIread(input_file)
-            image_torch = torch.tensor(np.squeeze(image).astype(float), device=device)
+            image_torch = torch.tensor(np.squeeze(image).astype(np.float32), device=device)
 
             while len(image_torch.shape)>3:
                 image_torch = image_torch.mean(image, dim=-1)
@@ -167,25 +168,34 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 for j in range(3):
                     aff_upscaled[:-1, j] = aff_upscaled[:-1, j] / factors[j]
                 aff_upscaled[:-1, -1] = aff_upscaled[:-1, -1] - np.matmul(aff_upscaled[:-1, :-1], 0.5 * (factors - 1))
-                upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
-                upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
             else:
                 _,voxsize,_ = decompose(aff2)
                 factors = voxsize / ref_res # do we need this?
                 # upscale/downscale to 1mm ?
-                
-                upscaled_padded = torch.zeros(tuple((np.ceil(np.array(image_torch.shape) / 32.0) * 32).astype(int)), device=device)
-                upscaled_padded[:image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]] = image_torch
+                upscaled = image_torch
                 aff_upscaled = aff2.copy()
+            
+            if trim:
+                trim_sz = (np.floor(np.array(upscaled.shape) / 32.0) * 32).astype(int)
+                upscaled_shift = ((upscaled.shape - trim_sz) // 2).astype(int)
+                upscaled_trim = upscaled[upscaled_shift[0]: upscaled_shift[0]+trim_sz[0], upscaled_shift[1]:upscaled_shift[1]+trim_sz[1], upscaled_shift[2]:upscaled_shift[2]+trim_sz[2]].contiguous()
 
-            pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
-            pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+                pred1 = model(upscaled_trim[None, None, ...]).detach()
+                pred2 = torch.flip(model(torch.flip(upscaled_trim,[0])[None, None, ...]), [2]).detach()
+
+            else:
+                upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
+                upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
+
+                pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+                pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
 
             softmax = Softmax(dim=0)
             nlat = int((n_labels - n_neutral_labels) / 2.0)
             vflip = np.concatenate([np.array(range(n_neutral_labels)),
                                     np.array(range(n_neutral_labels + nlat, n_labels)),
                                     np.array(range(n_neutral_labels, n_neutral_labels + nlat))])
+            
             pred_seg_p = 0.5 * softmax(pred1[0, 0:n_labels, ...]) + 0.5 * softmax(pred2[0, vflip, ...])
             pred_seg = label_list_segmentation_torch[torch.argmax(pred_seg_p, 0)]
             pred_seg = np.squeeze(pred_seg.detach().cpu().numpy())
@@ -200,6 +210,12 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                     if label_list_segmentation[l] > 0:
                         csv.write(',' + str(vols[l]) )
                 csv.write('\n')
+                
+            if trim: # need to pad with zeros
+                pred_seg_ = np.zeros(upscaled.shape, dtype=np.uint8)
+                pred_seg_[upscaled_shift[0]:upscaled_shift[0]+trim_sz[0],upscaled_shift[1]:upscaled_shift[1]+trim_sz[1],upscaled_shift[2]:upscaled_shift[2]+trim_sz[2]] = pred_seg
+                pred_seg = pred_seg_
+
             MRIwrite(pred_seg, aff_upscaled, output_file,dtype=np.uint8)
 
             # We are done!
