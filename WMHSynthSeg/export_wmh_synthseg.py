@@ -3,9 +3,10 @@ import os
 import sys
 
 import torch
-#sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from unet3d.model import UNet3D
-from utils import MRIread, MRIwrite, myzoom_torch, align_volume_to_ref
+
+from utils import align_volume_to_ref, myzoom_torch
+from utils_io import MRIread
 import numpy as np
 from torch.nn import Softmax
 # for voxel size

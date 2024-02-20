@@ -4,7 +4,8 @@ import sys
 
 import torch
 from unet3d.model import UNet3D
-from utils import MRIread, MRIwrite, myzoom_torch, align_volume_to_ref
+from utils_io import MRIread, MRIwrite
+from utils import myzoom_torch, align_volume_to_ref
 import numpy as np
 from torch.nn import Softmax
 

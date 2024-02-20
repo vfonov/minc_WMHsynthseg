@@ -95,12 +95,12 @@ def save_minc_volume(fn, data, aff, ref_fname=None, history=None, dtype=np.float
         _dtype=minc2_file.MINC2_USHORT
         data=data.astype(np.uint16)
 
-    if _dtype==minc2_file.MINC2_UBYTE or _dtype==minc2_file.MINC2_BYTE:
-        out.define(dims, minc2_file.MINC2_BYTE,  minc2_file.MINC2_BYTE)
-    elif _dtype==minc2_file.MINC2_USHORT or _dtype==minc2_file.MINC2_SHORT:
-        out.define(dims, minc2_file.MINC2_USHORT, minc2_file.MINC2_USHORT)
-    else:
+    if _dtype==minc2_file.MINC2_DOUBLE :
         out.define(dims, minc2_file.MINC2_USHORT, minc2_file.MINC2_DOUBLE)
+    elif _dtype==minc2_file.MINC2_FLOAT:
+        out.define(dims, minc2_file.MINC2_USHORT, minc2_file.MINC2_FLOAT)
+    else:
+        out.define(dims, _dtype, _dtype)
     out.create(fn)
     
     if ref_fname is not None:
