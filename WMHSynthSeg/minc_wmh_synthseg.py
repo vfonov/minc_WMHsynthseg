@@ -25,8 +25,8 @@ DeHavenon A, Sheth KN, Rosen MS, Kirsch J, Strisciuglio N, Wolterink JM, Eshaghi
 Under review. Preprint available at: https://arxiv.org/abs/2312.05119
 """ )
     
-    parser.add_argument("i", help="Input image or directory.")
-    parser.add_argument("o", help="Output segmentation (or directory, if the input is a directory)")
+    parser.add_argument("i", help="Input image or directory or .txt list")
+    parser.add_argument("o", help="Output segmentation (or directory, if the input is a directory) or output list .txt file")
 
     parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
@@ -189,9 +189,10 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
 
                 pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
-                pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+                #pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
 
             softmax = Softmax(dim=0)
+
             nlat = int((n_labels - n_neutral_labels) / 2.0)
             vflip = np.concatenate([np.array(range(n_neutral_labels)),
                                     np.array(range(n_neutral_labels + nlat, n_labels)),
