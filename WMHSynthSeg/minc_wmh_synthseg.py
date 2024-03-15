@@ -12,7 +12,7 @@ from torch.nn import Softmax
 # for voxel size
 from minc.geo import decompose
 
-
+from lora import add_lora, load_lora_state_dict
 
 def main():
     
@@ -36,6 +36,10 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
     parser.add_argument('-v', '--verbose',default=False, action='store_true') 
     parser.add_argument('--progress',default=False, action='store_true') 
     parser.add_argument('--trim',default=False, action='store_true',help='Trim instead of expand') 
+    ### LORA
+    parser.add_argument("--lora", help="Lora Model path")
+    parser.add_argument("--lora-r", type=int, default=0, help="Lora rank")
+    parser.add_argument("--lora-scale", type=float, default=1.0, help="Lora scale")
     
 
     args = parser.parse_args()
@@ -120,6 +124,18 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                        num_groups=num_groups, num_levels=num_levels, is_segmentation=False, is3d=True).to(device)
         checkpoint = torch.load(model_file, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
+
+        if args.lora is not None:
+            add_lora(model, device=device, r=args.lora_r, scale=args.lora_scale, dropout_p=0.1)
+            lora_dict = torch.load(args.lora, map_location=device)
+            load_lora_state_dict(model, lora_dict)
+
+
+        
+        my_state_dict = model.state_dict()
+        for i in my_state_dict:
+            print(f"{i} : {my_state_dict[i].device}")
+    
         model.eval()
 
         n_ims = len(images_to_segment)
@@ -189,7 +205,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
                 upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
 
                 pred1 = model(upscaled_padded[None, None, ...])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
-                #pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+                pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
 
             softmax = Softmax(dim=0)
 
