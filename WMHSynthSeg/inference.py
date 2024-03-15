@@ -2,12 +2,23 @@ import argparse
 
 def main():
 
-    parser = argparse.ArgumentParser(description="WMH-SynthSeg: joint segmentation of anatomy and white matter hyperintensities ", epilog='\n')
+    parser = argparse.ArgumentParser(description="WMH-SynthSeg: joint segmentation of anatomy and white matter hyperintensities ",
+        epilog="""
+If you use this method in a publication, please cite the following article:
+Quantifying white matter hyperintensity and brain volumes in heterogeneous clinical and low-field portable MRI
+Laso P, Cerri S, Sorby-Adams A, Guo J, Matteen F, Goebl P, Wu J, Liu P, Li H, Young SI, Billot B, Puonti O, Sze G, Payabavash S
+DeHavenon A, Sheth KN, Rosen MS, Kirsch J, Strisciuglio N, Wolterink JM, Eshaghi A, Barkhof F, Kimberly WT, and Iglesias JE.
+Under review. Preprint available at: https://arxiv.org/abs/2312.05119
+""" )
+                                     
     parser.add_argument("--i", help="Input image or directory.", required=True)
     parser.add_argument("--o", help="Output segmentation (or directory, if the input is a directory)", required=True)
     parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
     parser.add_argument("--device", default='cpu', help="device (cpu or cuda; optional)")
+    parser.add_argument('--trim',default=False, action='store_true',help='Trim instead of expand') 
+    parser.add_argument('--progress',default=False, action='store_true') 
+    parser.add_argument('-v', '--verbose',default=False, action='store_true') 
     parser.add_argument("--threads", type=int, default=1,
                         help="(optional) Number of CPU cores to be used. Default is 1. You can use -1 to use all available cores")
 
@@ -19,6 +30,9 @@ def main():
     device = args.device
     threads = args.threads
     model_file = args.model
+    trim = args.trim
+    progress = args.progress
+    verbose = args.verbose
 
     # Prepare list of images to segment and leave before loading packages if nothing to do
     import os
@@ -33,7 +47,13 @@ def main():
         if tail.endswith('.csv') is False:
             raise Exception('CSV output must be a CSV file')
 
-    if os.path.isfile(input_path): # file
+    if input_path.endswith('.txt') and output_path.endswith('.txt'):
+        # reading a list and writing a list 
+        with open(input_path,"r") as f:
+            images_to_segment=[i.rstrip('\n') for i in f.readlines()]
+        with open(output_path,"r") as f:
+            segmentations_to_write=[i.rstrip('\n') for i in f.readlines()]
+    elif os.path.isfile(input_path): # file
         if (input_path.endswith('.nii') or input_path.endswith('.nii.gz') or input_path.endswith('.mgz')) is False:
             raise Exception('Input image is not of a supported type (.nii, .nii.gz, or .mgz)')
         head, tail = os.path.split(output_path)
@@ -61,22 +81,24 @@ def main():
             os.mkdir(output_path)
 
     # We only import packages if we managed to parse
-    print('Arguments seem correct; loading Python packages...')
+    if verbose: print('Arguments seem correct; loading Python packages...')
     import torch
     sys.path.append(os.path.abspath(os.path.dirname(__file__)))
     from unet3d.model import UNet3D
-    from utils import MRIread, MRIwrite, myzoom_torch, align_volume_to_ref
+    from utils import  myzoom_torch, align_volume_to_ref
+    from utils_io import MRIread, MRIwrite
+
     import numpy as np
     from torch.nn import Softmax
 
    # Set up threads and device
     device = torch.device(device)
-    print('Using ' + args.device)
+    if verbose: print('Using ' + args.device)
     if threads < 0:
         threads = os.cpu_count()
-        print('Using all available threads ( %s )' % threads)
+        if verbose: print('Using all available threads ( %s )' % threads)
     else:
-        print('Using %s thread(s)' % threads)
+        if verbose: print('Using %s thread(s)' % threads)
     torch.set_num_threads(threads)
 
     # Constants;  TODO:replace by FS paths
@@ -104,7 +126,7 @@ def main():
     with torch.no_grad():
 
         # Model
-        print('Preparing model and loading weights')
+        if verbose: print('Preparing model and loading weights')
 
         model = UNet3D(in_channels, out_channels, final_sigmoid=False, f_maps=f_maps, layer_order=layer_order,
                        num_groups=num_groups, num_levels=num_levels, is_segmentation=False, is3d=True).to(device)
@@ -122,14 +144,17 @@ def main():
                     csv.write(',' + name + '(' + str(lab) + ')')
             csv.write('\n')
 
+        if progress:
+            from tqdm import tqdm
+            pbar = tqdm(total=n_ims)
+
         for nim in range(n_ims):
             input_file = images_to_segment[nim]
             output_file = segmentations_to_write[nim]
-            print('Working on image ' + str(1+nim) + ' of ' + str(+n_ims) + ': ' + input_file)
+            if verbose: print('Working on image ' + str(1+nim) + ' of ' + str(+n_ims) + ': ' + input_file)
 
             # try:
-
-            print('     Loading input volume and normalizing to [0,1]')
+            if verbose: print('     Loading input volume and normalizing to [0,1]')
             image, aff,_ = MRIread(input_file)
             image_torch = torch.tensor(np.squeeze(image).astype(float), device=device)
             while len(image_torch.shape)>3:
@@ -137,7 +162,7 @@ def main():
             image_torch, aff2 = align_volume_to_ref(image_torch, aff, aff_ref=np.eye(4), return_aff=True, n_dims=3)
             image_torch = image_torch / torch.max(image_torch)
 
-            print('     Upscaling to target resolution')
+            if verbose: print('     Upscaling to target resolution')
             voxsize = np.sqrt(np.sum(aff2 ** 2, axis=0))[:-1]
             factors = voxsize / ref_res
             upscaled = myzoom_torch(image_torch, factors, device=device)
@@ -145,12 +170,21 @@ def main():
             for j in range(3):
                 aff_upscaled[:-1, j] = aff_upscaled[:-1, j] / factors[j]
             aff_upscaled[:-1, -1] = aff_upscaled[:-1, -1] - np.matmul(aff_upscaled[:-1, :-1], 0.5 * (factors - 1))
-            upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
-            upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
 
-            print('     Pushing data through the CNN')
-            pred1 = model(upscaled_padded[None, None, ...])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
-            pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
+            if trim:
+                trim_sz = (np.floor(np.array(upscaled.shape) / 32.0) * 32).astype(int)
+                upscaled_shift = ((upscaled.shape - trim_sz) // 2).astype(int)
+                upscaled_trim = upscaled[upscaled_shift[0]: upscaled_shift[0]+trim_sz[0], upscaled_shift[1]:upscaled_shift[1]+trim_sz[1], upscaled_shift[2]:upscaled_shift[2]+trim_sz[2]].contiguous()
+
+                pred1 = model(upscaled_trim[None, None, ...]).detach()
+                pred2 = torch.flip(model(torch.flip(upscaled_trim,[0])[None, None, ...]), [2]).detach()
+            else:
+                upscaled_padded = torch.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)), device=device)
+                upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
+
+                pred1 = model(upscaled_padded[None, None, ...])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
+                pred2 = torch.flip(model(torch.flip(upscaled_padded,[0])[None, None, ...]), [2])[:, :, :upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]]
+
             softmax = Softmax(dim=0)
             nlat = int((n_labels - n_neutral_labels) / 2.0)
             vflip = np.concatenate([np.array(range(n_neutral_labels)),
@@ -171,24 +205,25 @@ def main():
                         csv.write(',' + str(vols[l]) )
                 csv.write('\n')
 
-            print('     Writing segmentation to disk: ' + output_file)
+            if trim: # need to pad with zeros
+                pred_seg_ = np.zeros(upscaled.shape, dtype=np.uint8)
+                pred_seg_[upscaled_shift[0]:upscaled_shift[0]+trim_sz[0],upscaled_shift[1]:upscaled_shift[1]+trim_sz[1],upscaled_shift[2]:upscaled_shift[2]+trim_sz[2]] = pred_seg
+                pred_seg = pred_seg_
+
             MRIwrite(pred_seg, aff_upscaled, output_file)
-            print(' ')
-            # except Exception as e:
-            #     print("     An error occurred in this volume:", str(e))
+            if progress:
+                pbar.update(1)
+
+        if progress:
+            pbar.close()
 
         # We are done!
         if output_csv_path is not None:
             csv.close()
-            print(' ')
-            print('Written volumes to ' + output_csv_path)
-            print(' ')
-        print('All done!')
-        print('If you use this method in a publication, please cite the following article:')
-        print('Quantifying white matter hyperintensity and brain volumes in heterogeneous clinical and low-field portable MRI')
-        print('Laso P, Cerri S, Sorby-Adams A, Guo J, Matteen F, Goebl P, Wu J, Liu P, Li H, Young SI, Billot B, Puonti O, Sze G, Payabavash S')
-        print('DeHavenon A, Sheth KN, Rosen MS, Kirsch J, Strisciuglio N, Wolterink JM, Eshaghi A, Barkhof F, Kimberly WT, and Iglesias JE.')
-        print('Under review. Preprint available at: https://arxiv.org/abs/2312.05119')
+            if verbose: 
+                print(' ')
+                print('Written volumes to ' + output_csv_path)
+                print(' ')
 
 
 # execute script

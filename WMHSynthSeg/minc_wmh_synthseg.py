@@ -236,20 +236,20 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
 
             MRIwrite(pred_seg, aff_upscaled, output_file,dtype=np.uint8)
 
-            # We are done!
-            if output_csv_path is not None:
-                csv.close()
-                if verbose: 
-                    print(' ')
-                    print('Written volumes to ' + output_csv_path)
-                    print(' ')
-            if verbose:  print('All done!')
-
             if progress:
                 pbar.update(1)
         #####
         if progress:
             pbar.close()
+            
+        # We are done!
+        if output_csv_path is not None:
+            csv.close()
+            if verbose: 
+                print(' ')
+                print('Written volumes to ' + output_csv_path)
+                print(' ')
+        if verbose:  print('All done!')
 
 
 # execute script
