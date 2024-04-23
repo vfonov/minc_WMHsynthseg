@@ -130,12 +130,6 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
             lora_dict = torch.load(args.lora, map_location=device)
             load_lora_state_dict(model, lora_dict)
 
-
-        
-        my_state_dict = model.state_dict()
-        for i in my_state_dict:
-            print(f"{i} : {my_state_dict[i].device}")
-    
         model.eval()
 
         n_ims = len(images_to_segment)
