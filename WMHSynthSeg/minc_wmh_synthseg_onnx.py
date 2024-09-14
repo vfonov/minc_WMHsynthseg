@@ -38,7 +38,7 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
 
     parser.add_argument("--model", help="Model path", required=True)
     parser.add_argument("--csv_vols", help="(optional) CSV file with volumes of ROIs")
-    parser.add_argument("--device", default='cpu', help="device (cpu or cuda; optional)")
+    parser.add_argument("--device", default=None, help="device (cpu or cuda; optional)")
     parser.add_argument("--threads", type=int, default=-1,
                         help="(optional) Number of CPU cores to be used. Default is 1. You can use -1 to use all available cores")
     parser.add_argument('-v', '--verbose',default=False, action='store_true') 
@@ -90,14 +90,16 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
             segmentations_to_write = [output_path]
 
     # Set up threads and device
-    if device == 'cpu':
+    if device is None:
+        providers = None
+    elif device == 'cpu':
         providers = ["CPUExecutionProvider"]
     else:
         providers = [("CUDAExecutionProvider", 
             {"cudnn_conv_use_max_workspace": '1',
             'arena_extend_strategy': 'kNextPowerOfTwo',
             # 'gpu_mem_limit': 47 * 1024 * 1024 * 1024,
-            })]
+           })]
 
     sess_options = onnxruntime.SessionOptions()
     if threads is not None:
@@ -195,11 +197,11 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
             pred2 = np.flip(model.run(['seg'], {'scan':np.flip(upscaled_trim, axis=0)[None, None, ...]})[0], axis=2)
 
         else:
-            upscaled_padded = np.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)))
+            upscaled_padded = np.zeros(tuple((np.ceil(np.array(upscaled.shape) / 32.0) * 32).astype(int)),dtype='float32')
             upscaled_padded[:upscaled.shape[0], :upscaled.shape[1], :upscaled.shape[2]] = upscaled
 
-            pred1 =         model.run(['seg'],{'scan':upscaled_padded[None, None, ...]})[0][:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
-            pred2 = np.flip(model.run(['seg'],{'scan':np.flip(upscaled_padded, axis=0)[None, None, ...]})[0], axis=2)[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]].detach()
+            pred1 =         model.run(['seg'],{'scan':upscaled_padded[None, None, ...]})[0][:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]]
+            pred2 = np.flip(model.run(['seg'],{'scan':np.flip(upscaled_padded, axis=0)[None, None, ...]})[0], axis=2)[:, :, :image_torch.shape[0], :image_torch.shape[1], :image_torch.shape[2]]
 
         
         nlat = int((n_labels - n_neutral_labels) / 2.0)
