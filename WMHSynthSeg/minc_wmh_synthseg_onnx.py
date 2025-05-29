@@ -188,6 +188,9 @@ Under review. Preprint available at: https://arxiv.org/abs/2312.05119
         if trim:
             trim_sz = (np.floor(np.array(upscaled.shape) / 32.0) * 32).astype(int)
             upscaled_shift = ((upscaled.shape - trim_sz) // 2).astype(int)
+            ### HACK: do not shift Z axis, to avoid cutting cerebellum
+            upscaled_shift[2] = 0
+            
             upscaled_trim = np.ascontiguousarray(
                             upscaled[upscaled_shift[0]:upscaled_shift[0]+trim_sz[0], 
                                      upscaled_shift[1]:upscaled_shift[1]+trim_sz[1], 
